@@ -15,9 +15,9 @@ const connect_keypoints = [
   [1, 11],
   [11, 12],
   [12, 13],
-  [14, 0],
+  [0, 14],
   [14, 16],
-  [15, 0],
+  [0, 15],
   [15, 17],
 ];
 
@@ -44,25 +44,46 @@ const connect_color = [
   [255, 0, 85],
 ];
 
-const DEFAULT_KEYPOINTS = [
-  [241, 77],
-  [241, 120],
-  [191, 118],
-  [177, 183],
-  [163, 252],
-  [298, 118],
-  [317, 182],
-  [332, 245],
-  [225, 241],
-  [213, 359],
-  [215, 454],
-  [270, 240],
-  [282, 360],
-  [286, 456],
-  [232, 59],
-  [253, 60],
-  [225, 70],
-  [260, 72],
+const bodyParts = [
+  "face",
+  "neck",
+  "leftShoulder",
+  "leftElbow",
+  "leftHand",
+  "rightShoulder",
+  "rightElbow",
+  "rightHand",
+  "leftHip",
+  "leftKnee",
+  "leftFoot",
+  "rightHip",
+  "rightKnee",
+  "rightFoot",
+  "leftEye",
+  "rightEye",
+  "leftEar",
+  "rightEar",
+];
+
+const defaultKeypoints = [
+  { bodyPart: bodyParts[0], x: 241, y: 77, visible: true },
+  { bodyPart: bodyParts[1], x: 241, y: 120, visible: true },
+  { bodyPart: bodyParts[2], x: 191, y: 118, visible: true },
+  { bodyPart: bodyParts[3], x: 177, y: 183, visible: true },
+  { bodyPart: bodyParts[4], x: 163, y: 252, visible: true },
+  { bodyPart: bodyParts[5], x: 298, y: 118, visible: true },
+  { bodyPart: bodyParts[6], x: 317, y: 182, visible: true },
+  { bodyPart: bodyParts[7], x: 332, y: 245, visible: true },
+  { bodyPart: bodyParts[8], x: 225, y: 241, visible: true },
+  { bodyPart: bodyParts[9], x: 213, y: 359, visible: true },
+  { bodyPart: bodyParts[10], x: 215, y: 454, visible: true },
+  { bodyPart: bodyParts[11], x: 270, y: 240, visible: true },
+  { bodyPart: bodyParts[12], x: 282, y: 360, visible: true },
+  { bodyPart: bodyParts[13], x: 286, y: 456, visible: true },
+  { bodyPart: bodyParts[14], x: 232, y: 59, visible: true },
+  { bodyPart: bodyParts[15], x: 253, y: 60, visible: true },
+  { bodyPart: bodyParts[16], x: 225, y: 70, visible: true },
+  { bodyPart: bodyParts[17], x: 260, y: 72, visible: true },
 ];
 
 /**
@@ -73,12 +94,8 @@ const DEFAULT_KEYPOINTS = [
 async function readFileToText(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = async () => {
-      resolve(reader.result);
-    };
-    reader.onerror = async () => {
-      reject(reader.error);
-    };
+    reader.onload = async () => resolve(reader.result);
+    reader.onerror = async () => reject(reader.error);
     reader.readAsText(file);
   });
 }
@@ -92,9 +109,7 @@ async function loadImageAsync(imageURL) {
   return new Promise((resolve) => {
     const e = new Image();
     e.setAttribute("crossorigin", "anonymous");
-    e.addEventListener("load", () => {
-      resolve(e);
-    });
+    e.addEventListener("load", () => resolve(e));
     e.src = imageURL;
     return e;
   });
@@ -106,9 +121,7 @@ async function loadImageAsync(imageURL) {
  * @returns A promise resolving to a data blob
  */
 async function canvasToBlob(canvas) {
-  return new Promise(function (resolve) {
-    canvas.toBlob(resolve);
-  });
+  return new Promise((resolve) => canvas.toBlob(resolve));
 }
 
 /**
@@ -117,14 +130,17 @@ async function canvasToBlob(canvas) {
  * @param left - The point's x value on the canvas
  * @param top - The point's y value on the canvas
  * @param lines - An array of fabricjs lines connected to the circles
+ * @param visible - whether the circle should be shown or hidden
+ * @param bodyPart - the body part the circle represents (i.e. face, leftHand, rightFoot, etc.)
+ * @param groupid - a number to identify the circle with other objects in the same pose
  * @returns A fabricjs circle
  */
-function makeCircle({ color, left, top, lines }) {
+function makeCircle({ color, left, top, lines, visible, bodyPart, groupid }) {
   return new fabric.Circle({
     left: left,
     top: top,
     strokeWidth: 1,
-    radius: 4,
+    radius: 5,
     fill: color,
     stroke: color,
     originX: "center",
@@ -136,7 +152,11 @@ function makeCircle({ color, left, top, lines }) {
     line4: lines[3],
     line5: lines[4],
     hasControls: false,
-    hasBorders: false,
+    hasBorders: true,
+    selectable: true,
+    opacity: visible ? 1 : 0,
+    bodyPart,
+    groupid,
   });
 }
 
@@ -144,19 +164,44 @@ function makeCircle({ color, left, top, lines }) {
  * Create a fabricjs line to connect points
  * @param color - An "rgb(#, #, #)" string
  * @param coords - The starting and ending points of the line
+ * @param groupid - a number to identify the line with other objects in the same pose
  * @returns A fabricjs line
  */
-function makeLine({ color, coords }) {
+function makeLine({ color, coords, groupid }) {
   return new fabric.Line(coords, {
     fill: color,
     stroke: color,
+    hasBorders: false,
     strokeWidth: 10,
+    strokeLineJoin: "bevel",
+    strokeLineCap: "round",
     selectable: false,
     evented: false,
     originX: "center",
     originY: "center",
     type: "line",
+    opacity: 1,
+    groupid,
   });
+}
+
+/**
+ * Load a pose from the connected DW Pose Estimator node (if it's calculated it already)
+ * @param dwLink - the node id of the connected estimator
+ * @returns The json keypoints of the calculated pose
+ */
+function loadPosesFromDW(dwLink) {
+  const openposeNode =
+    app.graph._nodes_by_id[app.graph.links[dwLink]["origin_id"]];
+
+  if (
+    !(openposeNode.id in app.nodeOutputs) ||
+    !("openpose_json" in app.nodeOutputs[openposeNode.id])
+  ) {
+    return "[]";
+  }
+
+  return app.nodeOutputs[openposeNode.id].openpose_json[0] ?? "[]";
 }
 
 class OpenPosePanel {
@@ -184,10 +229,10 @@ class OpenPosePanel {
     this.panel.style.margin = `auto auto 0 auto`;
 
     const rootHtml = `
-<canvas class="openpose-editor-canvas" />
-<div class="canvas-drag-overlay" />
-<input bind:this={fileInput} class="openpose-file-input" type="file" accept=".json" />
-`;
+    <canvas class="openpose-editor-canvas" />
+    <div class="canvas-drag-overlay" />
+    <input bind:this={fileInput} class="openpose-file-input" type="file" accept=".json" />`;
+
     const container = this.panel.addHTML(rootHtml, "openpose-container");
     container.style.width = "100%";
     container.style.height = "100%";
@@ -229,26 +274,64 @@ class OpenPosePanel {
     this.fileInput.style.display = "none";
     this.fileInput.addEventListener("change", this.onLoad.bind(this));
 
-    this.panel.addButton("Add", () => {
-      this.addPose();
-    });
-    this.panel.addButton("Remove", () => {
-      this.removePose();
-    });
-    this.panel.addButton("Reset", () => {
-      this.resetCanvas();
-    });
-    this.panel.addButton("Save", () => this.save());
-    this.panel.addButton("Load", () => this.load());
+    this.addButton = this.panel.addButton("Add", () => this.addPose());
+    this.removeButton = this.panel.addButton("Remove", () =>
+      this.removePose(this.canvas.getActiveObject())
+    );
+    this.selectAllButton = this.panel.addButton("Select", () =>
+      this.selectAll(this.canvas.getActiveObject())
+    );
+    this.toggleButton = this.panel.addButton("Hide", () => this.togglePose());
+    this.resetButton = this.panel.addButton("Reset", () => this.resetCanvas());
+    this.saveButton = this.panel.addButton("Save", () => this.savePoseToJson());
+    this.loadButton = this.panel.addButton("Load JSON", () => this.load());
+    this.dwButton = this.panel.addButton("Load DWPose", () =>
+      this.loadFromDW()
+    );
+
+    this.addButton.style.margin = "0 4px 0 0";
+    this.addButton.style.padding = "4px 12px 4px 12px";
+    this.addButton.style.height = "100%";
+
+    this.selectAllButton.style.margin = "0 4px 0 0";
+    this.selectAllButton.style.padding = "4px 12px 4px 12px";
+    this.selectAllButton.style.height = "100%";
+
+    this.toggleButton.style.margin = "0 4px 0 0";
+    this.toggleButton.style.padding = "4px 12px 4px 12px";
+    this.toggleButton.style.height = "100%";
+
+    this.removeButton.style.margin = "0 4px 0 0";
+    this.removeButton.style.padding = "4px 12px 4px 12px";
+    this.removeButton.style.height = "100%";
+
+    this.resetButton.style.margin = "0 4px 0 0";
+    this.resetButton.style.padding = "4px 12px 4px 12px";
+    this.resetButton.style.height = "100%";
+
+    this.saveButton.style.margin = "0 4px 0 0";
+    this.saveButton.style.padding = "4px 12px 4px 12px";
+    this.saveButton.style.height = "100%";
+
+    this.loadButton.style.margin = "0 4px 0 0";
+    this.loadButton.style.padding = "4px 12px 4px 12px";
+    this.loadButton.style.height = "100%";
+    this.loadButton.style.fontSize = "12px";
+
+    this.dwButton.style.margin = "0 4px 0 0";
+    this.dwButton.style.padding = "4px 12px 4px 12px";
+    this.dwButton.style.height = "100%";
+    this.dwButton.style.fontSize = "12px";
 
     const widthLabel = document.createElement("label");
-    widthLabel.innerHTML = "Width";
+    widthLabel.innerHTML = "Width:";
     widthLabel.style.fontFamily = "Arial";
     widthLabel.style.padding = "0 0.5rem";
     widthLabel.style.color = "#ccc";
     this.widthInput = document.createElement("input");
     this.widthInput.style.background = "#1c1c1c";
     this.widthInput.style.color = "#aaa";
+    this.widthInput.style.width = "60px";
     this.widthInput.setAttribute("type", "number");
     this.widthInput.setAttribute("min", "64");
     this.widthInput.setAttribute("max", "4096");
@@ -260,13 +343,14 @@ class OpenPosePanel {
     });
 
     const heightLabel = document.createElement("label");
-    heightLabel.innerHTML = "Height";
+    heightLabel.innerHTML = "Height:";
     heightLabel.style.fontFamily = "Arial";
     heightLabel.style.padding = "0 0.5rem";
     heightLabel.style.color = "#aaa";
     this.heightInput = document.createElement("input");
     this.heightInput.style.background = "#1c1c1c";
     this.heightInput.style.color = "#ccc";
+    this.heightInput.style.width = "60px";
     this.heightInput.setAttribute("type", "number");
     this.heightInput.setAttribute("min", "64");
     this.heightInput.setAttribute("max", "4096");
@@ -282,19 +366,11 @@ class OpenPosePanel {
     this.panel.footer.appendChild(this.heightInput);
 
     if (this.node.properties.savedPose) {
-      const error = this.loadJSON(this.node.properties.savedPose);
-      if (error) {
-        console.error(
-          "[OpenPose Editor] Failed to restore saved pose JSON",
-          error
-        );
-        this.resizeCanvas(this.canvasWidth, this.canvasHeight);
-        this.setPose(DEFAULT_KEYPOINTS);
-      }
+      this.loadJSON(this.node.properties.savedPose);
+      this.resizeCanvas(this.canvasWidth, this.canvasHeight);
       this.undo_history.push(JSON.stringify(this.canvas));
     } else {
       this.resizeCanvas(this.canvasWidth, this.canvasHeight);
-      this.setPose(DEFAULT_KEYPOINTS);
     }
 
     const keyHandler = this.onKeyDown.bind(this);
@@ -302,6 +378,8 @@ class OpenPosePanel {
     document.addEventListener("keydown", keyHandler);
     this.panel.onClose = async () => {
       document.removeEventListener("keydown", keyHandler);
+      // Deselecting the active object sets the circles positions relative to the canvas instead of the selection
+      this.canvas.discardActiveObject();
       await this.saveToNode();
     };
   }
@@ -323,141 +401,118 @@ class OpenPosePanel {
 
     // Update selection positions when angle is 0
     const updateGroupPositionWithoutRotation = ({
-      target,
+      selection,
       flipX,
       flipY,
-      showEyes,
     }) => {
-      const { top: rtop, left: rleft } = target;
-      for (const item of target._objects) {
-        let p = item;
-        p.scaleX = 1;
-        p.scaleY = 1;
-        const top =
-          rtop +
-          p.top * target.scaleY * flipY +
-          (target.height * target.scaleY) / 2;
-        const left =
-          rleft +
-          p.left * target.scaleX * flipX +
-          (target.width * target.scaleX) / 2;
-        p["_top"] = top;
-        p["_left"] = left;
-        if (p["id"] === 0) {
-          p.line1 && p.line1.set({ x1: left, y1: top });
-        } else {
-          p.line1 && p.line1.set({ x2: left, y2: top });
-        }
-        if (p["id"] === 14 || p["id"] === 15) {
-          p.radius = showEyes ? 5 : 0;
-          p.strokeWidth = showEyes ? 10 : 0;
-        }
-        p.line2 && p.line2.set({ x1: left, y1: top });
-        p.line3 && p.line3.set({ x1: left, y1: top });
-        p.line4 && p.line4.set({ x1: left, y1: top });
-        p.line5 && p.line5.set({ x1: left, y1: top });
-      }
+      const { top: rtop, left: rleft } = selection;
+      selection._objects
+        .filter((obj) => obj.type === "circle")
+        .forEach((circle) => {
+          const top =
+            rtop +
+            circle.top * selection.scaleY * flipY +
+            (selection.height * selection.scaleY) / 2;
+          const left =
+            rleft +
+            circle.left * selection.scaleX * flipX +
+            (selection.width * selection.scaleX) / 2;
+
+          // If it's the face invert the line
+          if (circle.bodyPart === "face") {
+            circle.line1 && circle.line1.set({ x1: left, y1: top });
+          } else {
+            circle.line1 && circle.line1.set({ x2: left, y2: top });
+          }
+          circle.line2 && circle.line2.set({ x1: left, y1: top });
+          circle.line3 && circle.line3.set({ x1: left, y1: top });
+          circle.line4 && circle.line4.set({ x1: left, y1: top });
+          circle.line5 && circle.line5.set({ x1: left, y1: top });
+        });
     };
 
     // Update selection positions when angle is not 0
-    const updateGroupPositionWithRotation = ({
-      target,
-      flipX,
-      flipY,
-      showEyes,
-    }) => {
-      const { tl, br } = target.aCoords;
+    const updateGroupPositionWithRotation = ({ selection, flipX, flipY }) => {
+      const { tl, br } = selection.aCoords;
       const center = { x: (tl.x + br.x) / 2, y: (tl.y + br.y) / 2 };
-      const rad = (target.angle * Math.PI) / 180;
+      const rad = (selection.angle * Math.PI) / 180;
       const sin = Math.sin(rad);
       const cos = Math.cos(rad);
-      for (const item of target._objects) {
-        let p = item;
-        const p_top = p.top * target.scaleY * flipY;
-        const p_left = p.left * target.scaleX * flipX;
-        const left = center.x + p_left * cos - p_top * sin;
-        const top = center.y + p_left * sin + p_top * cos;
-        p["_top"] = top;
-        p["_left"] = left;
-        if (p["id"] === 0) {
-          p.line1 && p.line1.set({ x1: left, y1: top });
-        } else {
-          p.line1 && p.line1.set({ x2: left, y2: top });
-        }
-        if (p["id"] === 14 || p["id"] === 15) {
-          p.radius = showEyes ? 5 : 0.3;
-          if (p.line1) p.line1.strokeWidth = showEyes ? 10 : 0;
-          if (p.line2) p.line2.strokeWidth = showEyes ? 10 : 0;
-        }
-        p.line2 && p.line2.set({ x1: left, y1: top });
-        p.line3 && p.line3.set({ x1: left, y1: top });
-        p.line4 && p.line4.set({ x1: left, y1: top });
-        p.line5 && p.line5.set({ x1: left, y1: top });
-      }
+      selection._objects
+        .filter((obj) => obj.type === "circle")
+        .forEach((circle) => {
+          const p_top = circle.top * selection.scaleY * flipY;
+          const p_left = circle.left * selection.scaleX * flipX;
+          const left = center.x + p_left * cos - p_top * sin;
+          const top = center.y + p_left * sin + p_top * cos;
+
+          // If it's the face invert the line
+          if (circle.bodyPart === "face") {
+            circle.line1 && circle.line1.set({ x1: left, y1: top });
+          } else {
+            circle.line1 && circle.line1.set({ x2: left, y2: top });
+          }
+          circle.line2 && circle.line2.set({ x1: left, y1: top });
+          circle.line3 && circle.line3.set({ x1: left, y1: top });
+          circle.line4 && circle.line4.set({ x1: left, y1: top });
+          circle.line5 && circle.line5.set({ x1: left, y1: top });
+        });
     };
 
     // Update line positions for a group of selected points
-    const updateGroupPosition = (target) => {
-      const flipX = target.flipX ? -1 : 1;
-      const flipY = target.flipY ? -1 : 1;
+    const updateGroupPosition = (selection) => {
+      const flipX = selection.flipX ? -1 : 1;
+      const flipY = selection.flipY ? -1 : 1;
       this.flipped = flipX * flipY === -1;
       const showEyes = this.flipped ? !this.visibleEyes : this.visibleEyes;
-      if (target.angle === 0) {
-        updateGroupPositionWithoutRotation({ target, flipX, flipY, showEyes });
+      if (selection.angle === 0) {
+        updateGroupPositionWithoutRotation({
+          selection,
+          flipX,
+          flipY,
+        });
       } else {
-        updateGroupPositionWithRotation({ target, flipX, flipY, showEyes });
+        updateGroupPositionWithRotation({ selection, flipX, flipY });
       }
-      target.setCoords();
     };
 
     // Update an individually moved point's line positions
-    const updatePointPosition = (target) => {
-      const flipX = target.flipX ? -1 : 1;
-      const flipY = target.flipY ? -1 : 1;
+    const updatePointPosition = (circle) => {
+      const flipX = circle.flipX ? -1 : 1;
+      const flipY = circle.flipY ? -1 : 1;
       this.flipped = flipX * flipY === -1;
 
-      if (target["id"] === 0) {
-        target.line1 && target.line1.set({ x1: target.left, y1: target.top });
+      // If it's the face invert the line
+      if (circle.bodyPart === "face") {
+        circle.line1 && circle.line1.set({ x1: circle.left, y1: circle.top });
       } else {
-        target.line1 && target.line1.set({ x2: target.left, y2: target.top });
+        circle.line1 && circle.line1.set({ x2: circle.left, y2: circle.top });
       }
-      target.line2 && target.line2.set({ x1: target.left, y1: target.top });
-      target.line3 && target.line3.set({ x1: target.left, y1: target.top });
-      target.line4 && target.line4.set({ x1: target.left, y1: target.top });
-      target.line5 && target.line5.set({ x1: target.left, y1: target.top });
+      circle.line2 && circle.line2.set({ x1: circle.left, y1: circle.top });
+      circle.line3 && circle.line3.set({ x1: circle.left, y1: circle.top });
+      circle.line4 && circle.line4.set({ x1: circle.left, y1: circle.top });
+      circle.line5 && circle.line5.set({ x1: circle.left, y1: circle.top });
 
-      target.setCoords();
+      circle.setCoords();
     };
 
     // Update line positions
-    const updateLines = (target) => {
-      if ("_objects" in target) {
-        updateGroupPosition(target);
+    const updateLines = (selection) => {
+      if ("_objects" in selection) {
+        updateGroupPosition(selection);
       } else {
-        updatePointPosition(target);
+        updatePointPosition(selection);
       }
       canvas.renderAll();
     };
 
-    canvas.on("object:moving", (e) => {
-      updateLines(e.target);
-    });
-
-    canvas.on("object:scaling", (e) => {
-      updateLines(e.target);
-      canvas.renderAll();
-    });
-
-    canvas.on("object:rotating", (e) => {
-      updateLines(e.target);
-      canvas.renderAll();
-    });
-
+    canvas.on("object:moving", (e) => updateLines(e.target));
+    canvas.on("object:scaling", (e) => updateLines(e.target));
+    canvas.on("object:rotating", (e) => updateLines(e.target));
     canvas.on("object:modified", () => {
       if (this.lockMode) return;
       this.undo_history.push(JSON.stringify(canvas));
       this.redo_history.length = 0;
-      // this.saveToNode();
     });
 
     return canvas;
@@ -481,22 +536,6 @@ class OpenPosePanel {
   }
 
   /**
-   * Take an array of keypoints, break them into poses, and add them to the canvas
-   * @param keypoints - An array of [x,y] points
-   * @returns void
-   */
-  setPose(keypoints) {
-    this.canvas.clear();
-    this.canvas.backgroundColor = "#000";
-    const poses = this.chunkKeypointsIntoPoses(keypoints);
-    for (const pose of poses) {
-      this.addPose(pose);
-      this.canvas.discardActiveObject();
-    }
-    this.saveToNode();
-  }
-
-  /**
    * Set the viewport's width & height relative to the screen's resolution
    * @param width - The canvas width
    * @param height - The canvas height
@@ -506,7 +545,7 @@ class OpenPosePanel {
     const viewportWidth = window.innerWidth / 2.25;
     const viewportHeight = window.innerHeight * 0.75;
     const ratio = Math.min(viewportWidth / width, viewportHeight / height);
-    return { width: width * ratio, height: height * ratio };
+    return { width: `${width * ratio}px`, height: `${height * ratio}px` };
   }
 
   /**
@@ -516,23 +555,19 @@ class OpenPosePanel {
    * @returns void
    */
   resizeCanvas(width, height) {
-    let resolution = this.calcResolution(width, height);
-
-    this.canvasWidth = width;
-    this.canvasHeight = height;
-
-    this.widthInput.value = `${width}`;
-    this.heightInput.value = `${height}`;
-
     this.canvas.setWidth(width);
     this.canvas.setHeight(height);
-    this.canvasElem.style.width = resolution["width"] + "px";
-    this.canvasElem.style.height = resolution["height"] + "px";
-    this.canvasElem.nextElementSibling.style.width = resolution["width"] + "px";
-    this.canvasElem.nextElementSibling.style.height =
-      resolution["height"] + "px";
-    this.canvasElem.parentElement.style.width = resolution["width"] + "px";
-    this.canvasElem.parentElement.style.height = resolution["height"] + "px";
+    this.widthInput.value = `${width}`;
+    this.heightInput.value = `${height}`;
+    const { width: wpx, height: hpx } = this.calcResolution(width, height);
+    this.canvasWidth = width;
+    this.canvasHeight = height;
+    this.canvasElem.style.width = wpx;
+    this.canvasElem.style.height = hpx;
+    this.canvasElem.nextElementSibling.style.width = wpx;
+    this.canvasElem.nextElementSibling.style.height = hpx;
+    this.canvasElem.parentElement.style.width = wpx;
+    this.canvasElem.parentElement.style.height = hpx;
     this.canvasElem.parentElement.style.margin = "auto";
   }
 
@@ -543,8 +578,9 @@ class OpenPosePanel {
   undo() {
     if (this.undo_history.length > 0) {
       this.lockMode = true;
-      if (this.undo_history.length > 1)
+      if (this.undo_history.length > 1) {
         this.redo_history.push(this.undo_history.pop());
+      }
       const content = this.undo_history[this.undo_history.length - 1];
       this.canvas.loadFromJSON(content, () => {
         this.canvas.renderAll();
@@ -575,8 +611,10 @@ class OpenPosePanel {
    */
   async saveToNode() {
     const serializedPoints = this.serializeJSON();
-    this.node.updateSavedPose(serializedPoints);
-    await this.uploadCanvasAsFile();
+    if (this.node.properties.savedPose !== serializedPoints) {
+      this.node.updateSavedPose(serializedPoints);
+      await this.uploadCanvasAsFile();
+    }
   }
 
   /**
@@ -585,22 +623,18 @@ class OpenPosePanel {
    */
   async captureCanvasClean() {
     this.lockMode = true;
+    this.canvas.getObjects("image").forEach((img) => (img.opacity = 0));
 
-    this.canvas.getObjects("image").forEach((img) => {
-      img.opacity = 0;
-    });
-    if (this.canvas.backgroundImage) this.canvas.backgroundImage.opacity = 0;
+    if (this.canvas.backgroundImage) {
+      this.canvas.backgroundImage.opacity = 0;
+    }
     this.canvas.discardActiveObject();
     this.canvas.renderAll();
-
     const blob = await canvasToBlob(this.canvasElem);
+    this.canvas.getObjects("image").forEach((img) => (img.opacity = 1));
 
-    this.canvas.getObjects("image").forEach((img) => {
-      img.opacity = 1;
-    });
     if (this.canvas.backgroundImage) this.canvas.backgroundImage.opacity = 0.5;
     this.canvas.renderAll();
-
     this.lockMode = false;
 
     return blob;
@@ -615,7 +649,7 @@ class OpenPosePanel {
       const blob = await this.captureCanvasClean();
 
       // Alternate between 10 image files to get the preview to update each time the pose is moved
-      const filename = `ComfyUI_OpenPose_${
+      const filename = `OpenPose_${
         this.node.properties.previewCounter || 0
       }.png`;
       this.node.incrementPreview();
@@ -666,26 +700,28 @@ class OpenPosePanel {
     const keypoints = this.canvas
       .getObjects()
       .filter((i) => i.type === "circle")
-      .map((c) => [c.left, c.top]);
+      .map((c) => [c.left, c.top, 1.0]);
 
-    const json = JSON.stringify(
+    const chunked = this.chunkKeypointsIntoPoses(keypoints);
+
+    const serialized = [
       {
-        width: this.canvas.width,
-        height: this.canvas.height,
-        keypoints: keypoints,
+        canvas_height: this.canvas.height,
+        canvas_width: this.canvas.width,
+        people: [
+          ...chunked.map((pose) => ({ pose_keypoints_2d: pose.flat() })),
+        ],
       },
-      null,
-      4
-    );
+    ];
 
-    return json;
+    return JSON.stringify(serialized, null, 4);
   }
 
   /**
    * The openpose keypoints array forms a pose from 18 pairs of x,y coordinates.
    * Splitting the array into groups of 18 separates the poses.
    * @param keypoints - The array of x,y coordinates
-   * @returns A 3D array containing arrays of 18 [x,y] coordinates
+   * @returns An array containing 18 [x, y, flipped] coordinates
    */
   chunkKeypointsIntoPoses(keypoints) {
     return keypoints.reduce((acc, point, i) => {
@@ -698,27 +734,52 @@ class OpenPosePanel {
 
   /**
    * Load an openpose JSON file and apply the poses within to the current canvas
+   * executes when the panel opens to load the savedPose
    * @param text - The JSON string
    * @returns null or a string representing an error
    */
   loadJSON(text) {
+    if (!text) {
+      return;
+    }
     const json = JSON.parse(text);
-    if (json["width"] && json["height"]) {
-      this.resizeCanvas(json["width"], json["height"]);
+    if (!json.length) {
+      return;
+    }
+    const { canvas_width, canvas_height } = json[0];
+
+    if (canvas_width && canvas_height) {
+      this.resizeCanvas(canvas_width, canvas_height);
     } else {
-      return "width, height is invalid";
+      return "canvas width or height is invalid";
     }
     this.resetCanvas();
-    const keypoints = json["keypoints"] || [];
-    const poses = this.chunkKeypointsIntoPoses(keypoints);
 
-    for (const pose of poses) {
+    const poses = json[0].people
+      .map((pose) => pose.pose_keypoints_2d)
+      .map((pose) => {
+        const person = [];
+        for (let i = 0; i < pose.length; i += 3) {
+          person.push([pose[i], pose[i + 1]]);
+        }
+        return person;
+      }, []);
+
+    poses.forEach((pose) => {
       if (pose.length % 18 === 0) {
-        this.addPose(pose);
+        this.addPose(
+          pose.map((keypoint, i) => ({
+            bodyPart: bodyParts[i],
+            x: keypoint[0],
+            y: keypoint[1],
+            visible: true,
+          }))
+        );
       } else {
         return "keypoints is invalid";
       }
-    }
+    });
+
     return null;
   }
 
@@ -726,7 +787,7 @@ class OpenPosePanel {
    * Save the pose to an openpose json file
    * @returns void
    */
-  save() {
+  savePoseToJson() {
     const json = this.serializeJSON();
     const blob = new Blob([json], {
       type: "application/json",
@@ -749,11 +810,38 @@ class OpenPosePanel {
   }
 
   /**
+   * Load a pose from a connected dw_pose estimation node (after it's run to load its own pose)
+   * @returns void
+   */
+  loadFromDW() {
+    const dwLink = this.node.inputs.find(
+      (input) => input.name === "pose_keypoint"
+    )?.link;
+    if (dwLink) {
+      const dwPose = loadPosesFromDW(dwLink);
+      if (!JSON.parse(dwPose)?.length) {
+        alert(
+          `pose_keypoint not detected in the connected DWPose Estimator node 
+(you may have to run a queue once to load it).`
+        );
+        return;
+      }
+      this.loadJSON(dwPose);
+      this.resizeCanvas(this.canvasWidth, this.canvasHeight);
+    } else {
+      alert("No DWPose Estimator pose_keypoint connected.");
+    }
+  }
+
+  /**
    * Add a new pose to the canvas
    * @param keypoints - An optional array of x,y points drawing an openpose figure. If none are provided, the default figure will be drawn.
    * @returns void
    */
-  addPose(keypoints = DEFAULT_KEYPOINTS) {
+  addPose(keypoints = defaultKeypoints) {
+    if (!keypoints.length) {
+      return;
+    }
     const group = new fabric.Group([], {
       subTargetCheck: true,
       interactive: true,
@@ -761,17 +849,20 @@ class OpenPosePanel {
 
     const lines = [];
     const circles = [];
+    const groupid = Math.floor(Math.random() * 1000000);
 
     for (let i = 0; i < connect_keypoints.length; i++) {
       // 接続されるidxを指定　[0, 1]なら0と1つなぐ / Specify the index to be connected [0, 1], then connect 0 to 1
       const item = connect_keypoints[i];
+      const lineStart = [keypoints[item[0]].x, keypoints[item[0]].y];
+      const lineEnd = [keypoints[item[1]].x, keypoints[item[1]].y];
       const line = makeLine({
         color: `rgba(${connect_color[i].join(", ")}, 0.7)`,
-        coords: keypoints[item[0]].concat(keypoints[item[1]]),
+        coords: lineStart.concat(lineEnd),
+        groupid,
       });
       lines.push(line);
       this.canvas.add(line);
-      line["id"] = item[0];
     }
 
     for (let i = 0; i < keypoints.length; i++) {
@@ -782,19 +873,19 @@ class OpenPosePanel {
           return idx;
         }
       });
+
       const circle = makeCircle({
         color: `rgb(${connect_color[i].join(", ")})`,
-        left: keypoints[i][0],
-        top: keypoints[i][1],
+        left: keypoints[i].x,
+        top: keypoints[i].y,
         lines: list,
+        bodyPart: keypoints[i].bodyPart,
+        visible: keypoints[i].visible,
+        groupid,
       });
-      circle["id"] = i;
       circles.push(circle);
-      group.add(circle);
+      group.addWithUpdate(circle);
     }
-
-    group.lines = lines;
-    group.circles = circles;
 
     this.canvas.discardActiveObject();
     this.canvas.add(group);
@@ -804,18 +895,133 @@ class OpenPosePanel {
   }
 
   /**
-   * Remove the currently selected pose from the canvas
+   * Hide the given circle and it's connected lines
+   * @param circle - the fabricjs circle to set opacity to 0
    * @returns void
    */
-  removePose() {
-    const selection = this.canvas.getActiveObject();
-    if (!selection || !("lines" in selection)) return;
+  toggleLimb(circle, opacity) {
+    circle.set({ opacity });
+    circle.line1 && circle.line1.set({ opacity });
+    circle.line2 && circle.line2.set({ opacity });
+    circle.line3 && circle.line3.set({ opacity });
+    circle.line4 && circle.line4.set({ opacity });
+    circle.line5 && circle.line5.set({ opacity });
+    this.canvas.requestRenderAll();
+  }
 
-    for (const line of selection.lines) {
-      this.canvas.remove(line);
+  /**
+   * Select all objects provided in the objectsToSelect array
+   * @param objectsToSelect - an array of fabricjs circle objects
+   * @returns void
+   */
+  selectAllFromCircle(objectsToSelect) {
+    const newSelection = new fabric.ActiveSelection(objectsToSelect, {
+      originX: "left",
+      originY: "top",
+      canvas: this.canvas,
+    });
+    this.canvas.add(newSelection);
+
+    newSelection.onDeselect = () => {
+      newSelection.forEachObject((o) => newSelection.removeWithUpdate(o));
+      this.canvas.remove(newSelection);
+      return false;
+    };
+
+    this.canvas.setActiveObject(newSelection);
+  }
+
+  /**
+   * Select all objects provided in the objectsToSelect array from an existing selection
+   * @param selection - an existing fabricjs ActiveSelection object
+   * @param objectsToSelect - an array of fabricjs circle objects
+   * @returns void
+   */
+  selectAllFromSelection(selection, objectsToSelect) {
+    selection._objects = [];
+    objectsToSelect.forEach((o) => selection.addWithUpdate(o));
+    this.canvas.setActiveObject(selection);
+  }
+
+  /**
+   * Get all remaining objects on the canvas belonging to the groups found on the existing selection
+   * @param selection - an existing fabricjs ActiveSelection object or Circle object
+   * @returns an array of fabricjs circle objects
+   */
+  getSelectedGroupsObjects(selection) {
+    const selectedGroups =
+      selection.type === "circle"
+        ? [selection.groupid]
+        : selection._objects?.reduce((acc, circle) => {
+            !acc.includes(circle.groupid) && acc.push(circle.groupid);
+            return acc;
+          }, []) ?? [];
+
+    return this.canvas
+      .getObjects()
+      .filter((i) => i.type === "circle" && selectedGroups.includes(i.groupid));
+  }
+
+  /**
+   * Select the remaining points connected to the active selection
+   * @param selection - The selected active object
+   * @returns void
+   */
+  selectAll(selection) {
+    if (!selection) return;
+    const objectsToSelect = this.getSelectedGroupsObjects(selection);
+    this.canvas.discardActiveObject();
+    if (selection.type === "circle") {
+      this.selectAllFromCircle(objectsToSelect);
+    } else {
+      this.selectAllFromSelection(selection, objectsToSelect);
     }
+    this.canvas.requestRenderAll();
+  }
 
-    this.canvas.remove(selection);
+  /**
+   * Remove the selected pose from the canvas
+   * @param selection - the pose to remove
+   * @returns void
+   */
+  removePose(selection) {
+    if (!selection) return;
+
+    this.getSelectedGroupsObjects(selection).forEach((circle) => {
+      circle.line1 && this.canvas.remove(circle.line1);
+      circle.line1 && this.canvas.remove(circle.line2);
+      circle.line1 && this.canvas.remove(circle.line3);
+      circle.line1 && this.canvas.remove(circle.line4);
+      circle.line1 && this.canvas.remove(circle.line5);
+      this.canvas.remove(circle);
+    });
+
+    this.canvas.discardActiveObject();
+  }
+
+  /**
+   * Hide or show the currently selected keypoints
+   * @returns void
+   */
+  togglePose() {
+    const selection = this.canvas.getActiveObject();
+    if (!selection) return;
+
+    if (selection.type === "circle") {
+      this.toggleLimb(selection, selection.opacity === 1 ? 0 : 1);
+    } else {
+      const opacities = selection._objects?.reduce(
+        (acc, circle) => {
+          circle.opacity === 1 ? (acc.on += 1) : (acc.off += 1);
+          return acc;
+        },
+        { on: 0, off: 0 }
+      );
+      const oppositeOpacity = opacities.on > opacities.off ? 0 : 1;
+      selection._objects?.forEach((circle) =>
+        this.toggleLimb(circle, oppositeOpacity)
+      );
+    }
   }
 
   /**
@@ -860,7 +1066,7 @@ app.registerExtension({
       this.imageWidget.callback = this.showImage.bind(this);
       this.imageWidget.disabled = true;
 
-      this.openWidget = this.addWidget("button", "open editor", "image", () => {
+      this.makeOpenPosePanel = () => {
         const graphCanvas = LiteGraph.LGraphCanvas.active_canvas;
         if (graphCanvas == null) return;
 
@@ -872,7 +1078,11 @@ app.registerExtension({
 
         this.openPosePanel = new OpenPosePanel(panel, this);
         document.body.appendChild(this.openPosePanel.panel);
-      });
+      };
+
+      this.openWidget = this.addWidget("button", "open editor", "image", () =>
+        this.makeOpenPosePanel()
+      );
       this.openWidget.serialize = false;
 
       // On load if we have a value then render the image
